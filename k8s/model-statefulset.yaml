@@ -1,0 +1,184 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: exostack-model
+  namespace: exostack
+  labels:
+    app: exostack-model
+    component: inference
+spec:
+  serviceName: exostack-model-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: exostack-model
+  template:
+    metadata:
+      labels:
+        app: exostack-model
+        component: inference
+    spec:
+      serviceAccountName: exostack-sa
+      containers:
+      - name: model
+        image: exostack/model-server:latest
+        ports:
+        - containerPort: 8001
+          name: http
+        - containerPort: 9001
+          name: metrics
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: MODEL_SHARD_ID
+          value: "$(POD_NAME)"
+        envFrom:
+        - configMapRef:
+            name: exostack-model-config
+        - secretRef:
+            name: exostack-model-secrets
+        resources:
+          requests:
+            cpu: "2"
+            memory: "8Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: model-cache
+          mountPath: /cache
+        - name: model-data
+          mountPath: /data
+        - name: shm
+          mountPath: /dev/shm
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: http
+          failureThreshold: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Gi
+  volumeClaimTemplates:
+  - metadata:
+      name: model-cache
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: fast
+      resources:
+        requests:
+          storage: 50Gi
+  - metadata:
+      name: model-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: exostack-model-headless
+  namespace: exostack
+  labels:
+    app: exostack-model
+spec:
+  clusterIP: None
+  ports:
+  - port: 8001
+    name: http
+  - port: 9001
+    name: metrics
+  selector:
+    app: exostack-model
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: exostack-model
+  namespace: exostack
+  labels:
+    app: exostack-model
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8001
+    targetPort: http
+    name: http
+  - port: 9001
+    targetPort: metrics
+    name: metrics
+  selector:
+    app: exostack-model
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: exostack-model-hpa
+  namespace: exostack
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: exostack-model
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: gpu_utilization
+      target:
+        type: AverageValue
+        averageValue: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 180

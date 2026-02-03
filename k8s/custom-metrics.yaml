@@ -1,0 +1,85 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: exostack-metrics
+  namespace: exostack
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: exostack-model
+  endpoints:
+  - port: metrics
+    interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: exostack-scaling-rules
+  namespace: exostack
+  labels:
+    release: prometheus
+spec:
+  groups:
+  - name: exostack.scaling.rules
+    rules:
+    - record: gpu_utilization
+      expr: |
+        avg(
+          nvidia_gpu_duty_cycle{namespace="exostack"}
+        ) by (pod)
+    - record: model_latency
+      expr: |
+        rate(
+          model_inference_duration_seconds_sum{namespace="exostack"}[5m]
+        ) /
+        rate(
+          model_inference_duration_seconds_count{namespace="exostack"}[5m]
+        )
+    - record: model_queue_length
+      expr: |
+        sum(
+          model_inference_queue_size{namespace="exostack"}
+        ) by (pod)
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: exostack-model-custom-hpa
+  namespace: exostack
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: exostack-model
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Pods
+    pods:
+      metric:
+        name: model_latency
+      target:
+        type: AverageValue
+        averageValue: 0.5
+  - type: Pods
+    pods:
+      metric:
+        name: model_queue_length
+      target:
+        type: AverageValue
+        averageValue: 10
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 120

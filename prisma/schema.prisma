@@ -1,0 +1,268 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String   @unique
+  password  String
+  firstName String?
+  lastName  String?
+  avatar    String?
+  
+  // User preferences and settings
+  timezone    String? @default("UTC")
+  language    String? @default("en")
+  notifications Boolean @default(true)
+  
+  // Account status
+  emailVerified Boolean @default(false)
+  isActive     Boolean @default(true)
+  isPremium    Boolean @default(false)
+  
+  // Authentication
+  lastLogin    DateTime?
+  loginCount   Int      @default(0)
+  
+  // ExoStack specific
+  apiToken     String?  @unique
+  maxNodes     Int      @default(5)
+  maxTasks     Int      @default(100)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  nodes      Node[]
+  sessions   Session[]
+  profiles   UserProfile[]
+  
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  
+  // Session metadata
+  userAgent    String?
+  ipAddress    String?
+  lastActivity DateTime @default(now())
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("sessions")
+}
+
+model UserProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  bio         String?
+  company     String?
+  location    String?
+  website     String?
+  github      String?
+  twitter     String?
+  linkedin    String?
+  
+  // Preferences
+  theme           String? @default("light")
+  emailDigest     Boolean @default(true)
+  taskNotifications Boolean @default(true)
+  nodeAlerts      Boolean @default(true)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_profiles")
+}
+
+model Node {
+  id          String   @id @default(cuid())
+  userId      String
+  nodeId      String   // External node ID from ExoStack
+  name        String
+  description String?
+  
+  // Node capabilities
+  cpuCores    Int?
+  memoryGb    Float?
+  gpuAvailable Boolean @default(false)
+  gpuType     String?
+  osType      String?
+  osVersion   String?
+  
+  // Status and metrics
+  status       String   @default("offline") // online, offline, error
+  lastSeen     DateTime?
+  totalTasks   Int      @default(0)
+  completedTasks Int    @default(0)
+  failedTasks  Int      @default(0)
+  
+  // Configuration
+  maxConcurrentTasks Int @default(5)
+  enabledTasks      String[] // List of enabled task types
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks   Task[]
+  metrics NodeMetric[]
+  
+  @@unique([userId, nodeId])
+  @@map("nodes")
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  nodeId      String
+  taskId      String   // External task ID from ExoStack
+  title       String
+  description String?
+  taskType    String   // text_generation, image_generation, etc.
+  model       String?
+  status      String   @default("pending") // pending, running, completed, failed, rejected
+  
+  // Task configuration
+  config      Json?    // Task-specific configuration
+  input       Json?    // Input data for the task
+  output      Json?    // Output data from the task
+  
+  // Performance metrics
+  startedAt   DateTime?
+  completedAt DateTime?
+  duration    Int?     // Duration in seconds
+  tokensUsed  Int?     // For text generation tasks
+  cost        Float?   // Estimated cost
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  node    Node          @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  metrics TaskMetric[]
+  
+  @@unique([nodeId, taskId])
+  @@map("tasks")
+}
+
+model NodeMetric {
+  id        String   @id @default(cuid())
+  nodeId    String
+  
+  // Resource metrics
+  cpuUsage      Float
+  memoryUsage   Float
+  diskUsage     Float?
+  gpuUsage      Float?
+  gpuMemoryUsage Float?
+  
+  // System metrics
+  temperature   Float?
+  networkUp     Float?
+  networkDown   Float?
+  
+  // AI readiness metrics
+  readinessScore   Float?
+  isIdle           Boolean?
+  batteryLevel     Float?
+  isOnBattery      Boolean?
+  
+  // Timestamp
+  timestamp DateTime @default(now())
+  
+  // Relations
+  node Node @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  
+  @@map("node_metrics")
+}
+
+model TaskMetric {
+  id        String   @id @default(cuid())
+  taskId    String
+  
+  // Performance metrics
+  cpuTime      Float?
+  memoryPeak   Float?
+  gpuTime      Float?
+  gpuMemoryPeak Float?
+  
+  // Quality metrics
+  accuracy     Float?
+  latency      Float?
+  throughput   Float?
+  
+  // Cost metrics
+  energyUsed   Float?
+  cost         Float?
+  
+  // Timestamp
+  timestamp DateTime @default(now())
+  
+  // Relations
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  @@map("task_metrics")
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  key         String   @unique
+  permissions String[] // List of permissions
+  
+  // Usage tracking
+  lastUsed    DateTime?
+  usageCount  Int      @default(0)
+  rateLimit   Int      @default(1000) // Requests per hour
+  
+  // Status
+  isActive    Boolean @default(true)
+  expiresAt   DateTime?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("api_keys")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String   // login, logout, create_node, delete_task, etc.
+  resource  String?  // Type of resource (user, node, task, etc.)
+  resourceId String? // ID of the resource
+  details   Json?    // Additional details about the action
+  
+  // Request metadata
+  ipAddress String?
+  userAgent String?
+  
+  // Timestamp
+  timestamp DateTime @default(now())
+  
+  @@map("audit_logs")
+}
